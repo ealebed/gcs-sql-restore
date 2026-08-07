@@ -77,4 +77,4 @@ sequenceDiagram
 | Cloud SQL instance SA | `roles/storage.objectViewer` on dumps bucket (Import read) |
 | GCS project SA | `roles/pubsub.publisher` on the dumps topic |
 
-See also: [ADR-001](decisions/ADR-001-cloudsql-import-api.md), [ADR-002](decisions/ADR-002-pubsub-trigger.md), [ADR-003](decisions/ADR-003-go-least-privilege.md).
+See also: [ADR-001](decisions/ADR-001-cloudsql-import-api.md), [ADR-002](decisions/ADR-002-pubsub-trigger.md), [ADR-003](decisions/ADR-003-go-least-privilege.md), [ADR-004](decisions/ADR-004-private-ip.md).

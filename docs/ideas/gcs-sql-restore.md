@@ -26,8 +26,8 @@ compare the direct-trigger path later without a redesign.
 Language: Go (Admin API orchestration; fits this workspace).
 
 ### Confirmed PoC defaults
-- Target database name: `wordpress`
-- Cloud SQL public IP: allowed for PoC
+- Target database name: owned by dump (`CREATE DATABASE` / `USE`)
+- Cloud SQL IP: private only (org policy `sql.restrictPublicIp`)
 - Region: `europe-west3`
 - GCP project: `ylebi-rnd`
 
@@ -59,6 +59,6 @@ Language: Go (Admin API orchestration; fits this workspace).
 - CI/CD pipelines — manual `terraform apply` per request
 
 ## Open Questions
-- ~~Fixed target DB name vs derive from object path?~~ → fixed `wordpress`
+- ~~Fixed target DB name vs derive from object path?~~ → dump owns DB name
 - ~~GCP region / project id?~~ → `europe-west3` / `ylebi-rnd`
-- ~~Public IP for PoC?~~ → yes
+- ~~Public IP for PoC?~~ → private IP only (org policy)

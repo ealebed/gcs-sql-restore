@@ -35,13 +35,13 @@ variable "function_memory" {
 }
 
 variable "function_timeout_seconds" {
-  description = "Cloud Run Function timeout in seconds (max 3600)"
+  description = "Cloud Run Function timeout in seconds. Event-triggered functions are capped at 540s by GCP."
   type        = number
-  default     = 3600
+  default     = 540
 
   validation {
-    condition     = var.function_timeout_seconds >= 60 && var.function_timeout_seconds <= 3600
-    error_message = "function_timeout_seconds must be between 60 and 3600."
+    condition     = var.function_timeout_seconds >= 60 && var.function_timeout_seconds <= 540
+    error_message = "function_timeout_seconds must be between 60 and 540 for event-triggered functions."
   }
 }
 
@@ -55,4 +55,21 @@ variable "imported_prefix" {
   description = "GCS prefix where dumps are moved after a successful import"
   type        = string
   default     = "imported"
+}
+
+variable "vpc_subnet_cidr" {
+  description = "CIDR range for the PoC VPC subnet"
+  type        = string
+  default     = "10.20.0.0/24"
+}
+
+variable "private_services_prefix_length" {
+  description = "Prefix length for the Private Services Access allocated range used by Cloud SQL"
+  type        = number
+  default     = 16
+
+  validation {
+    condition     = var.private_services_prefix_length >= 16 && var.private_services_prefix_length <= 24
+    error_message = "private_services_prefix_length must be between 16 and 24."
+  }
 }

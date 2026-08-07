@@ -11,6 +11,11 @@ import (
 // ErrSkip indicates the event should be ignored (not a failure).
 var ErrSkip = errors.New("skip event")
 
+// ErrImportPending indicates the Cloud SQL import was started but did not finish
+// within the poll window (e.g. event-trigger function timeout of 540s).
+// Callers should acknowledge the event without retrying or archiving.
+var ErrImportPending = errors.New("import still in progress")
+
 // Config holds restore orchestrator settings.
 type Config struct {
 	ProjectID      string
@@ -71,7 +76,8 @@ func NewService(cfg *Config, admin SQLAdmin, store ObjectStore, logger *slog.Log
 		c.PollInterval = 5 * time.Second
 	}
 	if c.PollTimeout <= 0 {
-		c.PollTimeout = 55 * time.Minute
+		// Leave headroom under the 540s event-trigger function timeout.
+		c.PollTimeout = 8 * time.Minute
 	}
 	if c.Now == nil {
 		c.Now = time.Now
@@ -103,6 +109,14 @@ func (s *Service) RestoreObject(ctx context.Context, obj ObjectRef) error {
 	s.logger.Info("import started", "operation", op.Name, "uri", obj.GCSURI())
 
 	if err := s.waitOperation(ctx, op.Name); err != nil {
+		if errors.Is(err, ErrImportPending) {
+			s.logger.Warn("import still running after poll window; leaving object in place",
+				"operation", op.Name,
+				"uri", obj.GCSURI(),
+				"error", err.Error(),
+			)
+			return fmt.Errorf("%w: %v", ErrImportPending, err)
+		}
 		return fmt.Errorf("import failed: %w", err)
 	}
 
@@ -127,10 +141,10 @@ func (s *Service) waitOperation(ctx context.Context, operationName string) error
 	deadline := time.Now().Add(s.cfg.PollTimeout)
 	for {
 		if err := ctx.Err(); err != nil {
-			return err
+			return fmt.Errorf("%w: context ended while waiting for %s: %v", ErrImportPending, operationName, err)
 		}
 		if time.Now().After(deadline) {
-			return fmt.Errorf("timed out waiting for operation %s after %s", operationName, s.cfg.PollTimeout)
+			return fmt.Errorf("%w: timed out waiting for operation %s after %s", ErrImportPending, operationName, s.cfg.PollTimeout)
 		}
 
 		op, err := s.admin.GetOperation(ctx, s.cfg.ProjectID, operationName)
@@ -148,7 +162,7 @@ func (s *Service) waitOperation(ctx context.Context, operationName string) error
 		select {
 		case <-ctx.Done():
 			timer.Stop()
-			return ctx.Err()
+			return fmt.Errorf("%w: context ended while waiting for %s: %v", ErrImportPending, operationName, ctx.Err())
 		case <-timer.C:
 		}
 	}

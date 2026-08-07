@@ -23,9 +23,14 @@ output "cloudsql_connection_name" {
   value       = google_sql_database_instance.main.connection_name
 }
 
-output "cloudsql_public_ip" {
-  description = "Cloud SQL public IP address"
-  value       = google_sql_database_instance.main.public_ip_address
+output "cloudsql_private_ip" {
+  description = "Cloud SQL private IP address (VPC-only; no public IP)"
+  value       = google_sql_database_instance.main.private_ip_address
+}
+
+output "vpc_network_name" {
+  description = "VPC network used for Cloud SQL private IP"
+  value       = google_compute_network.main.name
 }
 
 output "function_name" {
@@ -48,8 +53,13 @@ output "pubsub_dlq_topic" {
   value       = var.enable_pubsub ? google_pubsub_topic.dumps_dlq[0].name : null
 }
 
-output "cloudsql_root_password" {
-  description = "Generated Cloud SQL root password (PoC only — rotate or store in Secret Manager for real use)"
-  value       = random_password.cloudsql_root.result
+output "cloudsql_studio_user" {
+  description = "MySQL username for Cloud SQL Studio (root@% is not supported by Studio)"
+  value       = google_sql_user.studio.name
+}
+
+output "cloudsql_studio_password" {
+  description = "Password for sqladmin (PoC only — rotate or use Secret Manager for real use)"
+  value       = random_password.cloudsql_admin.result
   sensitive   = true
 }

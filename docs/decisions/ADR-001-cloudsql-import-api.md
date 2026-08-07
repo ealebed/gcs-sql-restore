@@ -60,4 +60,8 @@ and `USE`. The function does not delete or pre-create databases.
 - Re-importing the same dump may fail if tables already exist (samples have
   `CREATE TABLE` without `DROP TABLE`) — operators should use a fresh DB name,
   drop tables manually, or export dumps with drops when re-loading
-- Function timeout must cover import duration when polling (PoC uses up to 3600s)
+- Function timeout must cover import polling when possible. Event-triggered
+  Cloud Functions are capped at **540s**; the PoC polls up to ~8 minutes and
+  acks (without archiving) if the import is still running so Pub/Sub does not
+  start a duplicate import. Follow long imports via Cloud SQL operations /
+  Studio.

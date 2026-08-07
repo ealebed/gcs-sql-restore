@@ -29,6 +29,7 @@ data "archive_file" "function_source" {
 
   excludes = [
     ".git",
+    ".github",
     ".terraform",
     "terraform",
     "docs",
@@ -39,6 +40,12 @@ data "archive_file" "function_source" {
     ".vscode",
     "coverage.out",
     ".DS_Store",
+    "README.md",
+    "Makefile",
+    ".golangci.yaml",
+    ".pre-commit-config.yaml",
+    ".gitignore",
+    "*.sql",
   ]
 }
 

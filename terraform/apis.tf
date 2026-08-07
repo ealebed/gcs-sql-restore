@@ -11,6 +11,8 @@ resource "google_project_service" "services" {
     "cloudbuild.googleapis.com",
     "iam.googleapis.com",
     "cloudresourcemanager.googleapis.com",
+    "compute.googleapis.com",
+    "servicenetworking.googleapis.com",
   ])
 
   project            = var.project_id

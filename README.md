@@ -4,7 +4,7 @@ PoC: upload a WordPress/phpMyAdmin MySQL dump (`.sql` / `.sql.gz`) to GCS →
 Pub/Sub → Cloud Run Function (Go) → Cloud SQL Admin **Import** into MySQL 8.4.
 
 The dump owns the database name via `CREATE DATABASE IF NOT EXISTS` + `USE`
-(e.g. `camarotest2-wordpress`). The function does **not** wipe or pre-create a
+(e.g. `test-wordpress`). The function does **not** wipe or pre-create a
 fixed DB. It never downloads the dump — that is what makes multi-GB restores
 viable.
 
@@ -36,7 +36,7 @@ Decisions: [docs/decisions/](docs/decisions/) · Idea brief: [docs/ideas/gcs-sql
 | Project | `ylebi-rnd` |
 | Region | `europe-west3` |
 | Database name | From dump (`CREATE DATABASE` / `USE`) |
-| Public IP | enabled (PoC) |
+| Cloud SQL IP | Private IP only (org policy blocks public IP) |
 | Pub/Sub path | `enable_pubsub = true` |
 | Archive prefix | `imported/` (after successful import) |
 
@@ -62,7 +62,14 @@ Note outputs: `dumps_bucket_name`, `cloudsql_instance_name`, `function_name`.
 
 ```bash
 terraform output dumps_bucket_name
-terraform output -raw cloudsql_root_password   # PoC only
+terraform output -raw cloudsql_studio_user
+terraform output -raw cloudsql_studio_password   # PoC only
+```
+
+Terraform only redeploys the Cloud Run Function when the **function source zip hash** changes (Go code / `go.mod` / etc.). Docs, README, and Terraform-only edits should not rebuild the function. To apply DB/user changes without touching the function:
+
+```bash
+terraform apply -target=google_sql_user.studio
 ```
 
 ### Pre-flight (recommended)
@@ -96,7 +103,15 @@ gcloud functions logs read gcs-sql-restore-fn \
   --gen2 --region=europe-west3 --project=ylebi-rnd --limit=50
 ```
 
-Verify tables (Cloud SQL Studio, or `mysql` against the public IP with the root password output). Database name comes from the dump (e.g. `camarotest2-wordpress`).
+Verify tables in **Cloud SQL Studio** (Console → Cloud SQL → instance → Cloud SQL Studio):
+
+- User: `terraform output -raw cloudsql_studio_user` → `sqladmin`
+- Password: `terraform output -raw cloudsql_studio_password`
+- Pick a database created by your dump (or `mysql` / `information_schema` to start)
+
+Note: Studio does **not** support MySQL `root@%`. The PoC creates `sqladmin` with `cloudsqlsuperuser` instead.
+
+To connect from a VM/laptop you need VPC reachability (same VPC, VPN, or Cloud SQL Auth Proxy on a resource in the VPC) — not needed for this PoC’s Import path.
 
 ### Dump expectations
 
@@ -105,6 +120,7 @@ Verify tables (Cloud SQL Studio, or `mysql` against the public IP with the root 
 - No fixed target DB name in the function — site-specific names are supported
 - Samples often lack `DROP TABLE`; re-importing into an existing DB may fail on "table already exists"
 - After a successful import the object is moved to `imported/<timestamp>_<basename>` (server-side); events under `imported/` are skipped
+- Event-triggered function timeout is max **540s**; larger dumps may still finish in Cloud SQL after the function acks — check operations/Studio; object stays unarchived until a completed run archives it
 
 ## Development
 
@@ -124,6 +140,10 @@ make lint
 ## Not in this PoC
 
 CI/CD, Direct VPC `mysql` client path, soft merges, multi-tenant routing, alerting UI.
+
+## TODO (later)
+
+- [ ] Long-running import completion watcher: when Import outlives the 540s event-trigger window, poll the Cloud SQL operation asynchronously and archive to `imported/` only on success (see `tasks/todo.md`).
 
 ## Teardown
 

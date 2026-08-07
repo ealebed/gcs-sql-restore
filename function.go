@@ -78,6 +78,12 @@ func restoreSQLDump(ctx context.Context, event cloudevent.Event) error {
 			logger.Info("skipping object", "error", err.Error())
 			return nil
 		}
+		if errors.Is(err, restore.ErrImportPending) {
+			// Ack the Pub/Sub message so we do not start a second import.
+			// Cloud SQL continues the import; follow up via operations / Studio.
+			logger.Warn("import pending beyond function poll window", "error", err.Error())
+			return nil
+		}
 		return err
 	}
 	return nil
@@ -89,7 +95,7 @@ func configFromEnv() (restore.Config, error) {
 		InstanceID:     os.Getenv("CLOUDSQL_INSTANCE"),
 		ImportedPrefix: os.Getenv("IMPORTED_PREFIX"),
 		PollInterval:   5 * time.Second,
-		PollTimeout:    55 * time.Minute,
+		PollTimeout:    8 * time.Minute,
 	}
 	if cfg.ProjectID == "" {
 		cfg.ProjectID = os.Getenv("GOOGLE_CLOUD_PROJECT")
