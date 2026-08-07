@@ -85,9 +85,7 @@ func TestParseGCSNotification(t *testing.T) {
 func TestRestoreObjectHappyPath(t *testing.T) {
 	t.Parallel()
 	admin := &fakeSQLAdmin{
-		exists: false,
 		ops: map[string]*restore.Operation{
-			"op-create": {Name: "op-create", Done: true},
 			"op-import": {Name: "op-import", Done: true},
 		},
 	}
@@ -96,7 +94,6 @@ func TestRestoreObjectHappyPath(t *testing.T) {
 	svc, err := restore.NewService(&restore.Config{
 		ProjectID:      "proj",
 		InstanceID:     "inst",
-		DatabaseName:   "wordpress",
 		ImportedPrefix: "imported",
 		PollInterval:   time.Millisecond,
 		PollTimeout:    time.Second,
@@ -110,44 +107,14 @@ func TestRestoreObjectHappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RestoreObject: %v", err)
 	}
-	if !admin.created || !admin.imported {
-		t.Fatalf("expected create+import, got created=%v imported=%v", admin.created, admin.imported)
+	if !admin.imported {
+		t.Fatal("expected import")
 	}
-	if admin.deleted {
-		t.Fatal("did not expect delete when database missing")
+	if admin.importDB != "" {
+		t.Fatalf("expected empty import database (dump-owned), got %q", admin.importDB)
 	}
 	if store.src != "wp.sql.gz" || store.dst != "imported/20260807T120000Z_wp.sql.gz" {
 		t.Fatalf("unexpected archive move: %s → %s", store.src, store.dst)
-	}
-}
-
-func TestRestoreObjectWipesExisting(t *testing.T) {
-	t.Parallel()
-	admin := &fakeSQLAdmin{
-		exists: true,
-		ops: map[string]*restore.Operation{
-			"op-delete": {Name: "op-delete", Done: true},
-			"op-create": {Name: "op-create", Done: true},
-			"op-import": {Name: "op-import", Done: true},
-		},
-	}
-	svc, err := restore.NewService(&restore.Config{
-		ProjectID:    "proj",
-		InstanceID:   "inst",
-		DatabaseName: "wordpress",
-		PollInterval: time.Millisecond,
-		PollTimeout:  time.Second,
-	}, admin, &fakeObjectStore{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	if err != nil {
-		t.Fatalf("NewService: %v", err)
-	}
-
-	err = svc.RestoreObject(context.Background(), restore.ObjectRef{Bucket: "b", Name: "wp.sql"})
-	if err != nil {
-		t.Fatalf("RestoreObject: %v", err)
-	}
-	if !admin.deleted || !admin.created || !admin.imported {
-		t.Fatalf("expected delete+create+import")
 	}
 }
 
@@ -155,9 +122,8 @@ func TestRestoreObjectSkipsNonSQL(t *testing.T) {
 	t.Parallel()
 	admin := &fakeSQLAdmin{}
 	svc, err := restore.NewService(&restore.Config{
-		ProjectID:    "proj",
-		InstanceID:   "inst",
-		DatabaseName: "wordpress",
+		ProjectID:  "proj",
+		InstanceID: "inst",
 	}, admin, &fakeObjectStore{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
@@ -174,7 +140,6 @@ func TestRestoreObjectSkipsArchivedPrefix(t *testing.T) {
 	svc, err := restore.NewService(&restore.Config{
 		ProjectID:      "proj",
 		InstanceID:     "inst",
-		DatabaseName:   "wordpress",
 		ImportedPrefix: "imported",
 	}, admin, &fakeObjectStore{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
@@ -194,35 +159,16 @@ func TestRestoreObjectSkipsArchivedPrefix(t *testing.T) {
 
 type fakeSQLAdmin struct {
 	mu       sync.Mutex
-	exists   bool
-	deleted  bool
-	created  bool
 	imported bool
+	importDB string
 	ops      map[string]*restore.Operation
 }
 
-func (f *fakeSQLAdmin) DatabaseExists(context.Context, string, string, string) (bool, error) {
-	return f.exists, nil
-}
-
-func (f *fakeSQLAdmin) DeleteDatabase(context.Context, string, string, string) (*restore.Operation, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.deleted = true
-	return &restore.Operation{Name: "op-delete"}, nil
-}
-
-func (f *fakeSQLAdmin) CreateDatabase(context.Context, string, string, string) (*restore.Operation, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.created = true
-	return &restore.Operation{Name: "op-create"}, nil
-}
-
-func (f *fakeSQLAdmin) ImportSQL(_ context.Context, _, _, _, uri string) (*restore.Operation, error) {
+func (f *fakeSQLAdmin) ImportSQL(_ context.Context, _, _, database, uri string) (*restore.Operation, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.imported = true
+	f.importDB = database
 	if uri == "" {
 		return nil, errors.New("empty uri")
 	}

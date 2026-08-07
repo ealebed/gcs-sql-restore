@@ -15,10 +15,23 @@ approaches were considered:
 2. A function/job that downloads the dump and loads it with a `mysql` client
    over public IP or Direct VPC
 
+Sample phpMyAdmin dumps include site-specific names, e.g.:
+
+```sql
+CREATE DATABASE IF NOT EXISTS `test-wordpress` ...;
+USE `test-wordpress`;
+```
+
+They do not use a fixed `wordpress` database name and do not include
+`DROP TABLE` / wipe semantics.
+
 ## Decision
 Use the Cloud SQL Import API. The Cloud Run Function only orchestrates
-Admin API calls (ensure database, start import, poll operation). It never
-streams dump bytes.
+Admin API calls (start import with **no** `database` field, poll operation,
+archive object). It never streams dump bytes.
+
+The dump owns database creation and selection via `CREATE DATABASE IF NOT EXISTS`
+and `USE`. The function does not delete or pre-create databases.
 
 ## Alternatives Considered
 
@@ -27,6 +40,12 @@ streams dump bytes.
 - Cons: Function must handle multi-GB I/O, VPC wiring, credentials, and longer
   failure modes; worse fit for a reliability demo
 - Rejected for PoC; reserved as fallback if Import API proves insufficient
+
+### Fixed DB wipe/create (`wordpress`) before import
+- Pros: Predictable target name; clean slate each run
+- Cons: Conflicts with real dumps that embed site-specific DB names; unnecessary
+  when dumps already use `CREATE DATABASE IF NOT EXISTS`
+- Rejected after inspecting sample dumps
 
 ### Manual `gcloud sql import sql` only
 - Pros: Zero runtime code
@@ -37,6 +56,8 @@ streams dump bytes.
 - Multi-GB dumps are feasible without sizing the function for data throughput
 - IAM must grant the Cloud SQL instance service account `objectViewer` on the
   dump bucket
-- Target database must exist before import; PoC deletes and recreates
-  `wordpress` on each run
+- Dumps must include `CREATE DATABASE` / `USE` (or import will have no target DB)
+- Re-importing the same dump may fail if tables already exist (samples have
+  `CREATE TABLE` without `DROP TABLE`) — operators should use a fresh DB name,
+  drop tables manually, or export dumps with drops when re-loading
 - Function timeout must cover import duration when polling (PoC uses up to 3600s)

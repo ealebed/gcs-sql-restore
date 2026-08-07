@@ -16,12 +16,6 @@ variable "name_prefix" {
   default     = "gcs-sql-restore"
 }
 
-variable "database_name" {
-  description = "Fixed WordPress database name restored on each dump upload"
-  type        = string
-  default     = "wordpress"
-}
-
 variable "enable_pubsub" {
   description = "When true, GCS notifications publish to Pub/Sub and the function is triggered from that topic"
   type        = bool

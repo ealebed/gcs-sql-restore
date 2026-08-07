@@ -1,7 +1,8 @@
 # Architecture
 
-PoC flow: upload a WordPress MySQL dump to GCS, restore it into Cloud SQL via
-the Admin Import API, then archive the object under `imported/`.
+PoC flow: upload a WordPress/phpMyAdmin MySQL dump to GCS, import it into
+Cloud SQL via the Admin Import API (dump owns `CREATE DATABASE` / `USE`), then
+archive the object under `imported/`.
 
 ## Diagram
 
@@ -12,7 +13,7 @@ flowchart LR
   end
 
   subgraph GCS["GCS dumps bucket"]
-    O[Object at bucket root<br/>e.g. wordpress.sql.gz]
+    O[Object at bucket root<br/>e.g. site-dump.sql.gz]
     A["imported/timestamp_basename<br/>after success"]
   end
 
@@ -25,14 +26,13 @@ flowchart LR
     F[RestoreSQLDump]
     F --> V{SQL dump and<br/>not under imported/?}
     V -->|no| S[Ack / skip]
-    V -->|yes| W[Delete DB if exists<br/>Create wordpress]
-    W --> I[Cloud SQL instances.import<br/>gs://…]
+    V -->|yes| I[Cloud SQL instances.import<br/>no database field]
     I --> P[Poll Operation]
     P --> M[Server-side move<br/>to imported/]
   end
 
   subgraph Data["Cloud SQL MySQL 8.4"]
-    DB[(wordpress)]
+    DB[(DB name from dump<br/>e.g. site-wordpress)]
   end
 
   U -->|OBJECT_FINALIZE| O
@@ -56,16 +56,15 @@ sequenceDiagram
   participant SQL as Cloud SQL Admin API
   participant Inst as Cloud SQL MySQL 8.4
 
-  Op->>GCS: upload wordpress.sql.gz
+  Op->>GCS: upload site-dump.sql.gz
   GCS->>PS: OBJECT_FINALIZE (JSON_API_V1)
   PS->>Fn: messagePublished (Eventarc)
   Fn->>Fn: validate .sql/.sql.gz, skip imported/
-  Fn->>SQL: delete wordpress (if exists)
-  Fn->>SQL: create wordpress
-  Fn->>SQL: instances.import(gs://bucket/wordpress.sql.gz)
+  Fn->>SQL: instances.import(gs://… ) without database=
+  Note over SQL,Inst: Dump runs CREATE DATABASE IF NOT EXISTS + USE
   SQL->>Inst: load dump (instance SA reads GCS)
   SQL-->>Fn: Operation DONE
-  Fn->>GCS: copy to imported/timestamp_wordpress.sql.gz
+  Fn->>GCS: copy to imported/timestamp_site-dump.sql.gz
   Fn->>GCS: delete original object
   Note over GCS,Fn: finalize on imported/ is skipped
 ```
@@ -74,7 +73,7 @@ sequenceDiagram
 
 | Principal | Role |
 |-----------|------|
-| Function SA | Custom Cloud SQL orchestrator role + `roles/storage.objectUser` on dumps bucket |
+| Function SA | Custom Cloud SQL orchestrator role (`import` + `operations.get`) + `roles/storage.objectUser` on dumps bucket |
 | Cloud SQL instance SA | `roles/storage.objectViewer` on dumps bucket (Import read) |
 | GCS project SA | `roles/pubsub.publisher` on the dumps topic |
 

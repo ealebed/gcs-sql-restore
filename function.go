@@ -87,16 +87,12 @@ func configFromEnv() (restore.Config, error) {
 	cfg := restore.Config{
 		ProjectID:      os.Getenv("GCP_PROJECT"),
 		InstanceID:     os.Getenv("CLOUDSQL_INSTANCE"),
-		DatabaseName:   os.Getenv("CLOUDSQL_DATABASE"),
 		ImportedPrefix: os.Getenv("IMPORTED_PREFIX"),
 		PollInterval:   5 * time.Second,
 		PollTimeout:    55 * time.Minute,
 	}
 	if cfg.ProjectID == "" {
 		cfg.ProjectID = os.Getenv("GOOGLE_CLOUD_PROJECT")
-	}
-	if cfg.DatabaseName == "" {
-		cfg.DatabaseName = "wordpress"
 	}
 	if cfg.ImportedPrefix == "" {
 		cfg.ImportedPrefix = restore.DefaultImportedPrefix

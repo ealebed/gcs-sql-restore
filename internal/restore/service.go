@@ -15,7 +15,6 @@ var ErrSkip = errors.New("skip event")
 type Config struct {
 	ProjectID      string
 	InstanceID     string
-	DatabaseName   string
 	ImportedPrefix string
 	PollInterval   time.Duration
 	PollTimeout    time.Duration
@@ -30,16 +29,13 @@ type Operation struct {
 	Err  error
 }
 
-// SQLAdmin is the Cloud SQL Admin surface needed for wipe + import.
+// SQLAdmin is the Cloud SQL Admin surface needed for import.
 type SQLAdmin interface {
-	DatabaseExists(ctx context.Context, projectID, instanceID, database string) (bool, error)
-	DeleteDatabase(ctx context.Context, projectID, instanceID, database string) (*Operation, error)
-	CreateDatabase(ctx context.Context, projectID, instanceID, database string) (*Operation, error)
 	ImportSQL(ctx context.Context, projectID, instanceID, database, gcsURI string) (*Operation, error)
 	GetOperation(ctx context.Context, projectID, operationName string) (*Operation, error)
 }
 
-// Service orchestrates destructive restore via Cloud SQL Import.
+// Service orchestrates dump import via Cloud SQL Import API.
 type Service struct {
 	cfg    Config
 	admin  SQLAdmin
@@ -58,9 +54,6 @@ func NewService(cfg *Config, admin SQLAdmin, store ObjectStore, logger *slog.Log
 	}
 	if c.InstanceID == "" {
 		return nil, fmt.Errorf("instance id is required")
-	}
-	if c.DatabaseName == "" {
-		return nil, fmt.Errorf("database name is required")
 	}
 	if admin == nil {
 		return nil, fmt.Errorf("sql admin client is required")
@@ -86,7 +79,7 @@ func NewService(cfg *Config, admin SQLAdmin, store ObjectStore, logger *slog.Log
 	return &Service{cfg: c, admin: admin, store: store, logger: logger}, nil
 }
 
-// RestoreObject wipes/creates the target database, imports the dump, then archives the object.
+// RestoreObject imports the dump as-is (dump owns CREATE DATABASE / USE), then archives the object.
 func (s *Service) RestoreObject(ctx context.Context, obj ObjectRef) error {
 	if IsUnderPrefix(obj.Name, s.cfg.ImportedPrefix) {
 		return fmt.Errorf("%w: object %q is under archive prefix %q", ErrSkip, obj.Name, s.cfg.ImportedPrefix)
@@ -95,19 +88,15 @@ func (s *Service) RestoreObject(ctx context.Context, obj ObjectRef) error {
 		return fmt.Errorf("%w: %v", ErrSkip, err)
 	}
 
-	s.logger.Info("starting destructive restore",
+	s.logger.Info("starting sql import",
 		"bucket", obj.Bucket,
 		"object", obj.Name,
 		"uri", obj.GCSURI(),
-		"database", s.cfg.DatabaseName,
 		"instance", s.cfg.InstanceID,
 	)
 
-	if err := s.wipeAndCreate(ctx); err != nil {
-		return err
-	}
-
-	op, err := s.admin.ImportSQL(ctx, s.cfg.ProjectID, s.cfg.InstanceID, s.cfg.DatabaseName, obj.GCSURI())
+	// Empty database: dump must include CREATE DATABASE / USE (phpMyAdmin-style).
+	op, err := s.admin.ImportSQL(ctx, s.cfg.ProjectID, s.cfg.InstanceID, "", obj.GCSURI())
 	if err != nil {
 		return fmt.Errorf("start import: %w", err)
 	}
@@ -127,38 +116,10 @@ func (s *Service) RestoreObject(ctx context.Context, obj ObjectRef) error {
 	}
 
 	s.logger.Info("restore completed",
-		"database", s.cfg.DatabaseName,
 		"uri", obj.GCSURI(),
 		"archived_to", fmt.Sprintf("gs://%s/%s", obj.Bucket, dst),
 		"operation", op.Name,
 	)
-	return nil
-}
-
-func (s *Service) wipeAndCreate(ctx context.Context) error {
-	exists, err := s.admin.DatabaseExists(ctx, s.cfg.ProjectID, s.cfg.InstanceID, s.cfg.DatabaseName)
-	if err != nil {
-		return fmt.Errorf("check database: %w", err)
-	}
-	if exists {
-		s.logger.Info("deleting existing database", "database", s.cfg.DatabaseName)
-		deleteOp, deleteErr := s.admin.DeleteDatabase(ctx, s.cfg.ProjectID, s.cfg.InstanceID, s.cfg.DatabaseName)
-		if deleteErr != nil {
-			return fmt.Errorf("delete database: %w", deleteErr)
-		}
-		if waitErr := s.waitOperation(ctx, deleteOp.Name); waitErr != nil {
-			return fmt.Errorf("delete database operation: %w", waitErr)
-		}
-	}
-
-	s.logger.Info("creating database", "database", s.cfg.DatabaseName)
-	createOp, createErr := s.admin.CreateDatabase(ctx, s.cfg.ProjectID, s.cfg.InstanceID, s.cfg.DatabaseName)
-	if createErr != nil {
-		return fmt.Errorf("create database: %w", createErr)
-	}
-	if waitErr := s.waitOperation(ctx, createOp.Name); waitErr != nil {
-		return fmt.Errorf("create database operation: %w", waitErr)
-	}
 	return nil
 }
 

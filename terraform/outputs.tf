@@ -28,11 +28,6 @@ output "cloudsql_public_ip" {
   value       = google_sql_database_instance.main.public_ip_address
 }
 
-output "database_name" {
-  description = "Target database name restored on each dump"
-  value       = var.database_name
-}
-
 output "function_name" {
   description = "Cloud Run Function name"
   value       = google_cloudfunctions2_function.restore.name

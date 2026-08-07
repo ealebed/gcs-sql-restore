@@ -11,10 +11,10 @@ object finalize for `.sql` / `.sql.gz`, Pub/Sub delivers the event to the
 function. The function:
 
 1. Validates object name/type
-2. Deletes the target database if it exists, then creates it
-3. Calls Cloud SQL Admin API `instances.import` with `gs://…`
-4. Polls the long-running Operation until success/failure
-5. Emits structured logs for the demo
+2. Calls Cloud SQL Admin API `instances.import` with `gs://…` (no fixed
+   `database` — dump includes `CREATE DATABASE IF NOT EXISTS` / `USE`)
+3. Polls the long-running Operation until success/failure
+4. Moves the object under `imported/` and emits structured logs
 
 Infra is Terraform: GCS bucket, Pub/Sub (+ DLQ), Eventarc/GCS notification,
 Cloud SQL MySQL 8.4, dedicated function service account with minimal roles,

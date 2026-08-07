@@ -1,6 +1,5 @@
-project_id   = "ylebi-rnd"
-region       = "europe-west3"
-name_prefix  = "gcs-sql-restore"
-database_name = "wordpress"
+project_id    = "ylebi-rnd"
+region        = "europe-west3"
+name_prefix   = "gcs-sql-restore"
 enable_pubsub = true
 cloudsql_tier = "db-f1-micro"

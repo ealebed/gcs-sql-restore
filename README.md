@@ -1,10 +1,11 @@
 # gcs-sql-restore
 
-PoC: upload a WordPress MySQL dump (`.sql` / `.sql.gz`) to GCS → Pub/Sub →
-Cloud Run Function (Go) → Cloud SQL Admin **Import** into MySQL 8.4 database
-`wordpress` (wipe & recreate).
+PoC: upload a WordPress/phpMyAdmin MySQL dump (`.sql` / `.sql.gz`) to GCS →
+Pub/Sub → Cloud Run Function (Go) → Cloud SQL Admin **Import** into MySQL 8.4.
 
-The function never downloads the dump. That is what makes multi-GB restores
+The dump owns the database name via `CREATE DATABASE IF NOT EXISTS` + `USE`
+(e.g. `camarotest2-wordpress`). The function does **not** wipe or pre-create a
+fixed DB. It never downloads the dump — that is what makes multi-GB restores
 viable.
 
 ## Architecture
@@ -18,14 +19,12 @@ GCS OBJECT_FINALIZE
    Pub/Sub topic  ──(Eventarc retry)──► Cloud Run Function (Go)
         │                                      │
         └── DLQ topic (ops / future)           ├── skip imported/ and non-SQL
-                                               ├── delete DB if exists
-                                               ├── create `wordpress`
-                                               ├── instances.import(gs://…)
+                                               ├── instances.import(gs://…)  [no database=]
                                                └── move object → imported/<ts>_file
                                                          │
                                                          ▼
                                               Cloud SQL MySQL 8.4
-                                         (reads object via instance SA)
+                                         (CREATE DATABASE / USE from dump)
 ```
 
 Decisions: [docs/decisions/](docs/decisions/) · Idea brief: [docs/ideas/gcs-sql-restore.md](docs/ideas/gcs-sql-restore.md)
@@ -36,7 +35,7 @@ Decisions: [docs/decisions/](docs/decisions/) · Idea brief: [docs/ideas/gcs-sql
 |---------|-------|
 | Project | `ylebi-rnd` |
 | Region | `europe-west3` |
-| Database | `wordpress` |
+| Database name | From dump (`CREATE DATABASE` / `USE`) |
 | Public IP | enabled (PoC) |
 | Pub/Sub path | `enable_pubsub = true` |
 | Archive prefix | `imported/` (after successful import) |
@@ -78,11 +77,10 @@ gsutil cp ./wordpress.sql.gz "gs://${BUCKET}/wordpress.sql.gz"
 # If testing import manually without the function path, pause notifications or use a separate object name,
 # then:
 gcloud sql import sql "${INSTANCE}" "gs://${BUCKET}/manual-test.sql.gz" \
-  --database=wordpress \
   --project=ylebi-rnd
 ```
 
-(Create `wordpress` first if doing a fully manual test: `gcloud sql databases create wordpress --instance=...`.)
+(Omit `--database` when the dump includes `CREATE DATABASE` / `USE`.)
 
 ### End-to-end via the function
 
@@ -98,13 +96,14 @@ gcloud functions logs read gcs-sql-restore-fn \
   --gen2 --region=europe-west3 --project=ylebi-rnd --limit=50
 ```
 
-Verify tables (Cloud SQL Studio, or `mysql` against the public IP with the root password output).
+Verify tables (Cloud SQL Studio, or `mysql` against the public IP with the root password output). Database name comes from the dump (e.g. `camarotest2-wordpress`).
 
 ### Dump expectations
 
 - File ends with `.sql` or `.sql.gz`
-- Prefer dumps that target tables for database `wordpress` (avoid conflicting `CREATE DATABASE` for other names when possible)
-- Each upload **destructively** replaces `wordpress`
+- Dump includes `CREATE DATABASE IF NOT EXISTS …` and `USE …` (phpMyAdmin-style)
+- No fixed target DB name in the function — site-specific names are supported
+- Samples often lack `DROP TABLE`; re-importing into an existing DB may fail on "table already exists"
 - After a successful import the object is moved to `imported/<timestamp>_<basename>` (server-side); events under `imported/` are skipped
 
 ## Development
@@ -119,7 +118,7 @@ make lint
 
 | Identity | Access |
 |----------|--------|
-| Function SA | Custom role `gcsSqlRestoreOrchestrator` + `roles/storage.objectUser` on the dumps bucket (archive move) |
+| Function SA | Custom role `gcsSqlRestoreOrchestrator` (`import` + `operations.get`) + `roles/storage.objectUser` on the dumps bucket |
 | Cloud SQL instance SA | `roles/storage.objectViewer` on the dumps bucket |
 
 ## Not in this PoC
