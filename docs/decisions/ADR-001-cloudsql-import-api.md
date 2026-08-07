@@ -8,60 +8,50 @@ Accepted
 
 ## Context
 The PoC must restore WordPress MySQL dumps (including multi-GB `.sql` / `.sql.gz`
-files) from GCS into Cloud SQL MySQL 8.4 when an object is finalized. Two
-approaches were considered:
-
-1. Cloud SQL Admin API `instances.import` reading directly from `gs://`
-2. A function/job that downloads the dump and loads it with a `mysql` client
-   over public IP or Direct VPC
+files) from GCS into Cloud SQL MySQL 8.4 when an object is finalized.
 
 Sample phpMyAdmin dumps include site-specific names, e.g.:
 
 ```sql
-CREATE DATABASE IF NOT EXISTS `test-wordpress` ...;
-USE `test-wordpress`;
+CREATE DATABASE IF NOT EXISTS `camarotest2-wordpress` ...;
+USE `camarotest2-wordpress`;
 ```
 
-They do not use a fixed `wordpress` database name and do not include
-`DROP TABLE` / wipe semantics.
+They do not include `DROP TABLE`. Re-importing into an existing DB fails with
+`ERROR 1050 Table already exists` unless the target database is removed first.
 
 ## Decision
-Use the Cloud SQL Import API. The Cloud Run Function only orchestrates
-Admin API calls (start import with **no** `database` field, poll operation,
-archive object). It never streams dump bytes.
+Use the Cloud SQL Import API. The Cloud Run Function:
 
-The dump owns database creation and selection via `CREATE DATABASE IF NOT EXISTS`
-and `USE`. The function does not delete or pre-create databases.
+1. Peeks a small GCS prefix (gunzip if needed) and parses `CREATE DATABASE` / `USE`
+2. Drops that database via Admin API if it already exists (destructive fresh restore)
+3. Starts `instances.import` with **no** `database` field (dump recreates DB + tables)
+4. Polls the operation, then archives the object under `imported/`
+
+It never streams full dump bytes through the function process.
 
 ## Alternatives Considered
 
 ### Direct VPC + mysql client
-- Pros: Full control over mysql flags; works if Import API rejects a dump shape
-- Cons: Function must handle multi-GB I/O, VPC wiring, credentials, and longer
-  failure modes; worse fit for a reliability demo
-- Rejected for PoC; reserved as fallback if Import API proves insufficient
+- Pros: Full control over mysql flags
+- Cons: Multi-GB I/O, VPC wiring, credentials
+- Rejected for PoC; reserved if Import API proves insufficient
 
-### Fixed DB wipe/create (`wordpress`) before import
-- Pros: Predictable target name; clean slate each run
-- Cons: Conflicts with real dumps that embed site-specific DB names; unnecessary
-  when dumps already use `CREATE DATABASE IF NOT EXISTS`
-- Rejected after inspecting sample dumps
+### Drop tables instead of DROP DATABASE
+- Pros: Keeps empty DB shell
+- Cons: More surface area; incomplete if dump adds tables
+- Rejected
 
-### Manual `gcloud sql import sql` only
-- Pros: Zero runtime code
-- Cons: Does not demonstrate automated least-privilege trigger path for the team
-- Rejected as the primary deliverable (still useful as a pre-flight check)
+### Import without pre-drop
+- Pros: Simpler first version
+- Cons: Second upload fails on existing tables (observed in PoC)
+- Rejected after validation
 
 ## Consequences
-- Multi-GB dumps are feasible without sizing the function for data throughput
-- IAM must grant the Cloud SQL instance service account `objectViewer` on the
-  dump bucket
-- Dumps must include `CREATE DATABASE` / `USE` (or import will have no target DB)
-- Re-importing the same dump may fail if tables already exist (samples have
-  `CREATE TABLE` without `DROP TABLE`) — operators should use a fresh DB name,
-  drop tables manually, or export dumps with drops when re-loading
-- Function timeout must cover import polling when possible. Event-triggered
-  Cloud Functions are capped at **540s**; the PoC polls up to ~8 minutes and
-  acks (without archiving) if the import is still running so Pub/Sub does not
-  start a duplicate import. Follow long imports via Cloud SQL operations /
-  Studio.
+- Multi-GB dumps stay feasible (peek + Admin API only)
+- Function SA needs `databases.get` / `databases.delete` plus import/operations
+- Cloud SQL instance SA needs `objectViewer` on the dumps bucket
+- Dumps must include `CREATE DATABASE` / `USE` near the start of the file
+- Every successful re-upload **wipes** the dump's target database (by design)
+- Event-triggered functions cap at 540s; long imports may finish after ack without
+  auto-archive (see future TODO)

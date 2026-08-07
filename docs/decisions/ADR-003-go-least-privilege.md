@@ -17,13 +17,13 @@ service account with minimal roles for the internal team review.
 - Use dedicated SA `gcs-sql-restore-fn` bound to custom role
   `gcsSqlRestoreOrchestrator` with only:
   - `cloudsql.instances.get` / `import`
+  - `cloudsql.databases.get` / `delete`
   - `cloudsql.operations.get`
 - Grant that SA `roles/storage.objectUser` on the dumps bucket so it can
-  server-side move dumps into `imported/` after success (no dump bytes through
-  the function)
+  peek dump prefixes and server-side move dumps into `imported/` after success
 
-Database create/delete permissions are intentionally omitted: phpMyAdmin-style
-dumps include `CREATE DATABASE IF NOT EXISTS` / `USE` and own the DB name.
+Database create stays in the dump (`CREATE DATABASE IF NOT EXISTS`). The function
+only drops an existing target DB before import for a fresh restore.
 
 ## Alternatives Considered
 

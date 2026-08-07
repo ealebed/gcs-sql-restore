@@ -21,6 +21,7 @@ type Config struct {
 	ProjectID      string
 	InstanceID     string
 	ImportedPrefix string
+	PeekBytes      int64
 	PollInterval   time.Duration
 	PollTimeout    time.Duration
 	// Now is optional; defaults to time.Now. Override in tests.
@@ -34,8 +35,10 @@ type Operation struct {
 	Err  error
 }
 
-// SQLAdmin is the Cloud SQL Admin surface needed for import.
+// SQLAdmin is the Cloud SQL Admin surface needed for wipe + import.
 type SQLAdmin interface {
+	DatabaseExists(ctx context.Context, projectID, instanceID, database string) (bool, error)
+	DeleteDatabase(ctx context.Context, projectID, instanceID, database string) (*Operation, error)
 	ImportSQL(ctx context.Context, projectID, instanceID, database, gcsURI string) (*Operation, error)
 	GetOperation(ctx context.Context, projectID, operationName string) (*Operation, error)
 }
@@ -72,6 +75,9 @@ func NewService(cfg *Config, admin SQLAdmin, store ObjectStore, logger *slog.Log
 	if c.ImportedPrefix == "" {
 		c.ImportedPrefix = DefaultImportedPrefix
 	}
+	if c.PeekBytes <= 0 {
+		c.PeekBytes = DefaultPeekBytes
+	}
 	if c.PollInterval <= 0 {
 		c.PollInterval = 5 * time.Second
 	}
@@ -85,7 +91,7 @@ func NewService(cfg *Config, admin SQLAdmin, store ObjectStore, logger *slog.Log
 	return &Service{cfg: c, admin: admin, store: store, logger: logger}, nil
 }
 
-// RestoreObject imports the dump as-is (dump owns CREATE DATABASE / USE), then archives the object.
+// RestoreObject peeks the dump for DB name, drops that DB if present, imports, then archives.
 func (s *Service) RestoreObject(ctx context.Context, obj ObjectRef) error {
 	if IsUnderPrefix(obj.Name, s.cfg.ImportedPrefix) {
 		return fmt.Errorf("%w: object %q is under archive prefix %q", ErrSkip, obj.Name, s.cfg.ImportedPrefix)
@@ -94,25 +100,40 @@ func (s *Service) RestoreObject(ctx context.Context, obj ObjectRef) error {
 		return fmt.Errorf("%w: %v", ErrSkip, err)
 	}
 
-	s.logger.Info("starting sql import",
+	prefix, err := s.store.ReadObjectPrefix(ctx, obj.Bucket, obj.Name, s.cfg.PeekBytes)
+	if err != nil {
+		return fmt.Errorf("peek dump: %w", err)
+	}
+	dbName, err := ExtractDatabaseName(prefix)
+	if err != nil {
+		return fmt.Errorf("resolve database name: %w", err)
+	}
+
+	s.logger.Info("starting destructive sql import",
 		"bucket", obj.Bucket,
 		"object", obj.Name,
 		"uri", obj.GCSURI(),
+		"database", dbName,
 		"instance", s.cfg.InstanceID,
 	)
 
-	// Empty database: dump must include CREATE DATABASE / USE (phpMyAdmin-style).
+	if dropErr := s.dropDatabaseIfExists(ctx, dbName); dropErr != nil {
+		return dropErr
+	}
+
+	// Empty database field: dump owns CREATE DATABASE / USE.
 	op, err := s.admin.ImportSQL(ctx, s.cfg.ProjectID, s.cfg.InstanceID, "", obj.GCSURI())
 	if err != nil {
 		return fmt.Errorf("start import: %w", err)
 	}
-	s.logger.Info("import started", "operation", op.Name, "uri", obj.GCSURI())
+	s.logger.Info("import started", "operation", op.Name, "uri", obj.GCSURI(), "database", dbName)
 
 	if err := s.waitOperation(ctx, op.Name); err != nil {
 		if errors.Is(err, ErrImportPending) {
 			s.logger.Warn("import still running after poll window; leaving object in place",
 				"operation", op.Name,
 				"uri", obj.GCSURI(),
+				"database", dbName,
 				"error", err.Error(),
 			)
 			return fmt.Errorf("%w: %v", ErrImportPending, err)
@@ -131,9 +152,34 @@ func (s *Service) RestoreObject(ctx context.Context, obj ObjectRef) error {
 
 	s.logger.Info("restore completed",
 		"uri", obj.GCSURI(),
+		"database", dbName,
 		"archived_to", fmt.Sprintf("gs://%s/%s", obj.Bucket, dst),
 		"operation", op.Name,
 	)
+	return nil
+}
+
+func (s *Service) dropDatabaseIfExists(ctx context.Context, database string) error {
+	exists, err := s.admin.DatabaseExists(ctx, s.cfg.ProjectID, s.cfg.InstanceID, database)
+	if err != nil {
+		return fmt.Errorf("check database %q: %w", database, err)
+	}
+	if !exists {
+		s.logger.Info("database does not exist yet; skip drop", "database", database)
+		return nil
+	}
+
+	s.logger.Info("dropping existing database before import", "database", database)
+	op, err := s.admin.DeleteDatabase(ctx, s.cfg.ProjectID, s.cfg.InstanceID, database)
+	if err != nil {
+		return fmt.Errorf("delete database %q: %w", database, err)
+	}
+	if err := s.waitOperation(ctx, op.Name); err != nil {
+		if errors.Is(err, ErrImportPending) {
+			return fmt.Errorf("delete database %q: %w", database, err)
+		}
+		return fmt.Errorf("delete database %q operation: %w", database, err)
+	}
 	return nil
 }
 

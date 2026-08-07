@@ -26,7 +26,8 @@ flowchart LR
     F[RestoreSQLDump]
     F --> V{SQL dump and<br/>not under imported/?}
     V -->|no| S[Ack / skip]
-    V -->|yes| I[Cloud SQL instances.import<br/>no database field]
+    V -->|yes| D[Peek dump → DB name<br/>DROP DB if exists]
+    D --> I[Cloud SQL instances.import<br/>no database field]
     I --> P[Poll Operation]
     P --> M[Server-side move<br/>to imported/]
   end
@@ -60,8 +61,11 @@ sequenceDiagram
   GCS->>PS: OBJECT_FINALIZE (JSON_API_V1)
   PS->>Fn: messagePublished (Eventarc)
   Fn->>Fn: validate .sql/.sql.gz, skip imported/
+  Fn->>GCS: peek dump prefix (gunzip if needed)
+  Fn->>Fn: parse CREATE DATABASE / USE
+  Fn->>SQL: delete database if exists
   Fn->>SQL: instances.import(gs://… ) without database=
-  Note over SQL,Inst: Dump runs CREATE DATABASE IF NOT EXISTS + USE
+  Note over SQL,Inst: Dump runs CREATE DATABASE IF NOT EXISTS + USE + tables
   SQL->>Inst: load dump (instance SA reads GCS)
   SQL-->>Fn: Operation DONE
   Fn->>GCS: copy to imported/timestamp_site-dump.sql.gz

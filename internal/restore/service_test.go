@@ -56,6 +56,50 @@ func TestArchiveObjectName(t *testing.T) {
 	}
 }
 
+func TestExtractDatabaseName(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name    string
+		sql     string
+		want    string
+		wantErr bool
+	}{
+		{
+			name: "create if not exists backticks",
+			sql:  "CREATE DATABASE IF NOT EXISTS `camarotest2-wordpress` DEFAULT CHARACTER SET utf8mb4;\nUSE `camarotest2-wordpress`;\n",
+			want: "camarotest2-wordpress",
+		},
+		{
+			name: "use only",
+			sql:  "USE `logstesting-wordpress`;\nCREATE TABLE t (id INT);\n",
+			want: "logstesting-wordpress",
+		},
+		{
+			name:    "missing",
+			sql:     "CREATE TABLE t (id INT);\n",
+			wantErr: true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := restore.ExtractDatabaseName([]byte(tc.sql))
+			if tc.wantErr {
+				if err == nil {
+					t.Fatal("expected error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ExtractDatabaseName: %v", err)
+			}
+			if got != tc.want {
+				t.Fatalf("got %q want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestValidateObject(t *testing.T) {
 	t.Parallel()
 	err := restore.ValidateObject(restore.ObjectRef{Bucket: "b", Name: "x.txt"})
@@ -82,14 +126,18 @@ func TestParseGCSNotification(t *testing.T) {
 	}
 }
 
-func TestRestoreObjectHappyPath(t *testing.T) {
+func TestRestoreObjectHappyPathDropsExisting(t *testing.T) {
 	t.Parallel()
 	admin := &fakeSQLAdmin{
+		exists: true,
 		ops: map[string]*restore.Operation{
+			"op-delete": {Name: "op-delete", Done: true},
 			"op-import": {Name: "op-import", Done: true},
 		},
 	}
-	store := &fakeObjectStore{}
+	store := &fakeObjectStore{
+		prefix: []byte("CREATE DATABASE IF NOT EXISTS `camarotest2-wordpress`;\nUSE `camarotest2-wordpress`;\n"),
+	}
 	fixed := time.Date(2026, 8, 7, 12, 0, 0, 0, time.UTC)
 	svc, err := restore.NewService(&restore.Config{
 		ProjectID:      "proj",
@@ -103,18 +151,49 @@ func TestRestoreObjectHappyPath(t *testing.T) {
 		t.Fatalf("NewService: %v", err)
 	}
 
-	err = svc.RestoreObject(context.Background(), restore.ObjectRef{Bucket: "b", Name: "wp.sql.gz"})
+	err = svc.RestoreObject(context.Background(), restore.ObjectRef{Bucket: "b", Name: "wp.sql"})
 	if err != nil {
 		t.Fatalf("RestoreObject: %v", err)
 	}
+	if !admin.deleted || !admin.imported {
+		t.Fatalf("expected delete+import, deleted=%v imported=%v", admin.deleted, admin.imported)
+	}
+	if admin.deletedDB != "camarotest2-wordpress" {
+		t.Fatalf("deleted DB=%q", admin.deletedDB)
+	}
+	if store.src != "wp.sql" || store.dst != "imported/20260807T120000Z_wp.sql" {
+		t.Fatalf("unexpected archive move: %s → %s", store.src, store.dst)
+	}
+}
+
+func TestRestoreObjectSkipsDropWhenMissing(t *testing.T) {
+	t.Parallel()
+	admin := &fakeSQLAdmin{
+		exists: false,
+		ops: map[string]*restore.Operation{
+			"op-import": {Name: "op-import", Done: true},
+		},
+	}
+	store := &fakeObjectStore{
+		prefix: []byte("CREATE DATABASE IF NOT EXISTS `newdb`;\nUSE `newdb`;\n"),
+	}
+	svc, err := restore.NewService(&restore.Config{
+		ProjectID:    "proj",
+		InstanceID:   "inst",
+		PollInterval: time.Millisecond,
+		PollTimeout:  time.Second,
+	}, admin, store, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	if err := svc.RestoreObject(context.Background(), restore.ObjectRef{Bucket: "b", Name: "wp.sql"}); err != nil {
+		t.Fatalf("RestoreObject: %v", err)
+	}
+	if admin.deleted {
+		t.Fatal("did not expect delete")
+	}
 	if !admin.imported {
 		t.Fatal("expected import")
-	}
-	if admin.importDB != "" {
-		t.Fatalf("expected empty import database (dump-owned), got %q", admin.importDB)
-	}
-	if store.src != "wp.sql.gz" || store.dst != "imported/20260807T120000Z_wp.sql.gz" {
-		t.Fatalf("unexpected archive move: %s → %s", store.src, store.dst)
 	}
 }
 
@@ -158,10 +237,25 @@ func TestRestoreObjectSkipsArchivedPrefix(t *testing.T) {
 }
 
 type fakeSQLAdmin struct {
-	mu       sync.Mutex
-	imported bool
-	importDB string
-	ops      map[string]*restore.Operation
+	mu        sync.Mutex
+	exists    bool
+	deleted   bool
+	deletedDB string
+	imported  bool
+	importDB  string
+	ops       map[string]*restore.Operation
+}
+
+func (f *fakeSQLAdmin) DatabaseExists(context.Context, string, string, string) (bool, error) {
+	return f.exists, nil
+}
+
+func (f *fakeSQLAdmin) DeleteDatabase(_ context.Context, _, _, database string) (*restore.Operation, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.deleted = true
+	f.deletedDB = database
+	return &restore.Operation{Name: "op-delete"}, nil
 }
 
 func (f *fakeSQLAdmin) ImportSQL(_ context.Context, _, _, database, uri string) (*restore.Operation, error) {
@@ -184,9 +278,17 @@ func (f *fakeSQLAdmin) GetOperation(_ context.Context, _, name string) (*restore
 }
 
 type fakeObjectStore struct {
-	mu  sync.Mutex
-	src string
-	dst string
+	mu     sync.Mutex
+	prefix []byte
+	src    string
+	dst    string
+}
+
+func (f *fakeObjectStore) ReadObjectPrefix(context.Context, string, string, int64) ([]byte, error) {
+	if len(f.prefix) == 0 {
+		return nil, errors.New("no prefix configured")
+	}
+	return f.prefix, nil
 }
 
 func (f *fakeObjectStore) MoveObject(_ context.Context, _, srcObject, dstObject string) error {

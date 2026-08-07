@@ -19,6 +19,7 @@ GCS OBJECT_FINALIZE
    Pub/Sub topic  ──(Eventarc retry)──► Cloud Run Function (Go)
         │                                      │
         └── DLQ topic (ops / future)           ├── skip imported/ and non-SQL
+                                               ├── peek dump → DB name; DROP DB if exists
                                                ├── instances.import(gs://…)  [no database=]
                                                └── move object → imported/<ts>_file
                                                          │
@@ -116,9 +117,9 @@ To connect from a VM/laptop you need VPC reachability (same VPC, VPN, or Cloud S
 ### Dump expectations
 
 - File ends with `.sql` or `.sql.gz`
-- Dump includes `CREATE DATABASE IF NOT EXISTS …` and `USE …` (phpMyAdmin-style)
-- No fixed target DB name in the function — site-specific names are supported
-- Samples often lack `DROP TABLE`; re-importing into an existing DB may fail on "table already exists"
+- Dump includes `CREATE DATABASE IF NOT EXISTS …` and `USE …` near the top (phpMyAdmin-style)
+- Function peeks the dump prefix, **drops that database if it already exists**, then imports (fresh restore)
+- Samples often lack `DROP TABLE`; without the pre-drop step, re-import fails with "table already exists"
 - After a successful import the object is moved to `imported/<timestamp>_<basename>` (server-side); events under `imported/` are skipped
 - Event-triggered function timeout is max **540s**; larger dumps may still finish in Cloud SQL after the function acks — check operations/Studio; object stays unarchived until a completed run archives it
 
@@ -134,7 +135,7 @@ make lint
 
 | Identity | Access |
 |----------|--------|
-| Function SA | Custom role `gcsSqlRestoreOrchestrator` (`import` + `operations.get`) + `roles/storage.objectUser` on the dumps bucket |
+| Function SA | Custom role (`import`, `databases.get/delete`, `operations.get`) + `roles/storage.objectUser` on the dumps bucket |
 | Cloud SQL instance SA | `roles/storage.objectViewer` on the dumps bucket |
 
 ## Not in this PoC

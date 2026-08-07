@@ -2,9 +2,12 @@ package restore
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 
+	"google.golang.org/api/googleapi"
 	sqladmin "google.golang.org/api/sqladmin/v1"
 )
 
@@ -20,6 +23,27 @@ func NewAPIClient(ctx context.Context) (*APIClient, error) {
 		return nil, fmt.Errorf("create sqladmin client: %w", err)
 	}
 	return &APIClient{svc: svc}, nil
+}
+
+// DatabaseExists reports whether the named database exists on the instance.
+func (c *APIClient) DatabaseExists(ctx context.Context, projectID, instanceID, database string) (bool, error) {
+	_, err := c.svc.Databases.Get(projectID, instanceID, database).Context(ctx).Do()
+	if err == nil {
+		return true, nil
+	}
+	if isNotFound(err) {
+		return false, nil
+	}
+	return false, err
+}
+
+// DeleteDatabase deletes a database and returns the long-running operation.
+func (c *APIClient) DeleteDatabase(ctx context.Context, projectID, instanceID, database string) (*Operation, error) {
+	op, err := c.svc.Databases.Delete(projectID, instanceID, database).Context(ctx).Do()
+	if err != nil {
+		return nil, err
+	}
+	return mapOperation(op), nil
 }
 
 // ImportSQL starts a SQL import from a GCS URI.
@@ -68,4 +92,12 @@ func mapOperation(op *sqladmin.Operation) *Operation {
 		out.Err = fmt.Errorf("cloud sql operation error: %s", strings.Join(parts, "; "))
 	}
 	return out
+}
+
+func isNotFound(err error) bool {
+	var apiErr *googleapi.Error
+	if errors.As(err, &apiErr) {
+		return apiErr.Code == http.StatusNotFound
+	}
+	return false
 }

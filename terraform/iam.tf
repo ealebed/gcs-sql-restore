@@ -11,12 +11,14 @@ resource "google_service_account" "function" {
 resource "google_project_iam_custom_role" "restore_orchestrator" {
   role_id     = "gcsSqlRestoreOrchestrator"
   title       = "GCS SQL Restore Orchestrator"
-  description = "Minimal Cloud SQL Admin permissions to import SQL dumps from GCS"
+  description = "Minimal Cloud SQL Admin permissions to drop target DB and import SQL dumps from GCS"
   project     = var.project_id
 
   permissions = [
     "cloudsql.instances.get",
     "cloudsql.instances.import",
+    "cloudsql.databases.get",
+    "cloudsql.databases.delete",
     "cloudsql.operations.get",
   ]
 }
