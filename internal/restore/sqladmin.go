@@ -1,0 +1,111 @@
+package restore
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net/http"
+	"strings"
+
+	"google.golang.org/api/googleapi"
+	sqladmin "google.golang.org/api/sqladmin/v1"
+)
+
+// APIClient implements SQLAdmin using the Cloud SQL Admin API.
+type APIClient struct {
+	svc *sqladmin.Service
+}
+
+// NewAPIClient creates an APIClient with Application Default Credentials.
+func NewAPIClient(ctx context.Context) (*APIClient, error) {
+	svc, err := sqladmin.NewService(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("create sqladmin client: %w", err)
+	}
+	return &APIClient{svc: svc}, nil
+}
+
+// DatabaseExists reports whether the named database exists on the instance.
+func (c *APIClient) DatabaseExists(ctx context.Context, projectID, instanceID, database string) (bool, error) {
+	_, err := c.svc.Databases.Get(projectID, instanceID, database).Context(ctx).Do()
+	if err == nil {
+		return true, nil
+	}
+	if isNotFound(err) {
+		return false, nil
+	}
+	return false, err
+}
+
+// DeleteDatabase deletes a database and returns the long-running operation.
+func (c *APIClient) DeleteDatabase(ctx context.Context, projectID, instanceID, database string) (*Operation, error) {
+	op, err := c.svc.Databases.Delete(projectID, instanceID, database).Context(ctx).Do()
+	if err != nil {
+		return nil, err
+	}
+	return mapOperation(op), nil
+}
+
+// CreateDatabase creates a database and returns the long-running operation.
+func (c *APIClient) CreateDatabase(ctx context.Context, projectID, instanceID, database string) (*Operation, error) {
+	op, err := c.svc.Databases.Insert(projectID, instanceID, &sqladmin.Database{
+		Name:     database,
+		Project:  projectID,
+		Instance: instanceID,
+	}).Context(ctx).Do()
+	if err != nil {
+		return nil, err
+	}
+	return mapOperation(op), nil
+}
+
+// ImportSQL starts a SQL import from a GCS URI.
+func (c *APIClient) ImportSQL(ctx context.Context, projectID, instanceID, database, gcsURI string) (*Operation, error) {
+	op, err := c.svc.Instances.Import(projectID, instanceID, &sqladmin.InstancesImportRequest{
+		ImportContext: &sqladmin.ImportContext{
+			FileType: "SQL",
+			Uri:      gcsURI,
+			Database: database,
+		},
+	}).Context(ctx).Do()
+	if err != nil {
+		return nil, err
+	}
+	return mapOperation(op), nil
+}
+
+// GetOperation fetches a Cloud SQL operation by name.
+func (c *APIClient) GetOperation(ctx context.Context, projectID, operationName string) (*Operation, error) {
+	name := operationName
+	if i := strings.LastIndex(operationName, "/"); i >= 0 {
+		name = operationName[i+1:]
+	}
+	op, err := c.svc.Operations.Get(projectID, name).Context(ctx).Do()
+	if err != nil {
+		return nil, err
+	}
+	return mapOperation(op), nil
+}
+
+func mapOperation(op *sqladmin.Operation) *Operation {
+	out := &Operation{
+		Name: op.Name,
+		Done: op.Status == "DONE",
+	}
+	if op.Error != nil && len(op.Error.Errors) > 0 {
+		parts := make([]string, 0, len(op.Error.Errors))
+		for _, e := range op.Error.Errors {
+			parts = append(parts, fmt.Sprintf("%s: %s", e.Code, e.Message))
+		}
+		out.Err = fmt.Errorf("cloud sql operation error: %s", strings.Join(parts, "; "))
+	}
+	return out
+}
+
+func isNotFound(err error) bool {
+	var apiErr *googleapi.Error
+	if errors.As(err, &apiErr) {
+		return apiErr.Code == http.StatusNotFound
+	}
+	return false
+}

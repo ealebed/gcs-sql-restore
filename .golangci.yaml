@@ -1,0 +1,99 @@
+version: "2"
+
+run:
+  timeout: 5m
+  issues-exit-code: 2
+  tests: false
+
+linters:
+  default: none
+  enable:
+    - bodyclose
+    - depguard
+    - dogsled
+    - dupl
+    - errcheck
+    - importas
+    - funlen
+    - goconst
+    - gocritic
+    - gocyclo
+    - gosec
+    - govet
+    - ineffassign
+    - lll
+    - misspell
+    - nakedret
+    - nolintlint
+    - staticcheck
+    - unconvert
+    - unparam
+    - unused
+    - whitespace
+  settings:
+    depguard:
+      rules:
+        main:
+          files:
+            - $all
+            - "!$test"
+          allow:
+            - $gostd
+            - github.com/ylebi/gcs-sql-restore
+            - cloud.google.com/go
+            - github.com/GoogleCloudPlatform/functions-framework-go
+            - github.com/cloudevents/sdk-go
+            - google.golang.org/api
+            - google.golang.org/api/sqladmin
+    govet:
+      enable:
+        - nilness
+        - shadow
+    gocyclo:
+      min-complexity: 15
+    dupl:
+      threshold: 100
+    goconst:
+      min-len: 2
+      min-occurrences: 3
+    misspell:
+      locale: US
+    importas:
+      alias:
+        - pkg: google.golang.org/api/sqladmin/v1
+          alias: sqladmin
+        - pkg: github.com/cloudevents/sdk-go/v2/event
+          alias: cloudevent
+    lll:
+      line-length: 160
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - experimental
+        - opinionated
+        - performance
+        - style
+      disabled-checks:
+        - dupImport
+        - ifElseChain
+        - octalLiteral
+        - rangeValCopy
+        - unnamedResult
+        - whyNoLint
+        - wrapperFunc
+    funlen:
+      lines: -1
+      statements: 50
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/ylebi/gcs-sql-restore
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

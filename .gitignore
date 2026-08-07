@@ -1,0 +1,72 @@
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+.cover/
+coverage.out
+coverage.html
+coverage.txt
+
+# Go workspace file
+go.work
+go.work.sum
+
+# Build artifacts
+.bin/
+**/.bin/
+/bin/
+/build/
+dist/
+function-source.zip
+
+# IDE
+.vscode/
+**/.vscode/
+*.code-workspace
+.idea/
+**/.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+**/.DS_Store
+Thumbs.db
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Debug files
+debug
+debug.test
+
+# Temporary files
+*.tmp
+*.temp
+*.log
+*.zip
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.*
+*.tfvars
+*.tfvars.json
+override.tf
+override.tf.json
+!terraform.tfvars.example
+
+# Pre-commit
+.pre-commit-config.yaml.bak
