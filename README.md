@@ -129,7 +129,15 @@ To connect from a VM/laptop you need VPC reachability (same VPC, VPN, or Cloud S
 make test-race
 make fmt
 make lint
+make terraform-fmt
+make terraform-validate
+make terraform-lint
 ```
+
+CI on pull requests and `master` runs the same Go checks plus Terraform fmt / validate / TFLint. See [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
+
+## Dependabot automation
+Minor and patch Dependabot PRs are approved and squash-merged by a GitHub App after required CI passes. See [Dependabot automation](./docs/dependabot-automation.md).
 
 ## Least privilege
 
@@ -140,7 +148,7 @@ make lint
 
 ## Not in this PoC
 
-CI/CD, Direct VPC `mysql` client path, soft merges, multi-tenant routing, alerting UI.
+Direct VPC `mysql` client path, soft merges, multi-tenant routing, alerting UI.
 
 ## TODO (later)
 

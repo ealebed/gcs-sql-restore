@@ -63,6 +63,7 @@ test_dumps/*.sql.gz
 
 # Terraform
 .terraform/
+**/.tflint.d/
 *.tfstate
 *.tfstate.*
 crash.*
