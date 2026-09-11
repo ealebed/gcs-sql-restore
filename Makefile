@@ -37,6 +37,19 @@ tidy:
 	$(GO) mod tidy
 	$(GO) mod verify
 
+.PHONY: terraform-fmt
+terraform-fmt:
+	terraform -chdir=terraform fmt -recursive
+
+.PHONY: terraform-validate
+terraform-validate:
+	terraform -chdir=terraform init -backend=false -input=false -lockfile=readonly
+	terraform -chdir=terraform validate
+
+.PHONY: terraform-lint
+terraform-lint:
+	cd terraform && tflint --init && tflint
+
 .PHONY: clean
 clean:
 	rm -f $(BIN)
@@ -47,12 +60,15 @@ clean:
 .PHONY: help
 help:
 	@echo "Available targets:"
-	@echo "  all        - build the project (default)"
-	@echo "  build      - build the project"
-	@echo "  test       - run tests"
-	@echo "  test-race  - run tests with race detector"
-	@echo "  fmt        - format code"
-	@echo "  lint       - run linter"
-	@echo "  tidy       - tidy and verify modules"
-	@echo "  clean      - clean build artifacts"
-	@echo "  help       - show this help message"
+	@echo "  all                - build the project (default)"
+	@echo "  build              - build the project"
+	@echo "  test               - run tests"
+	@echo "  test-race          - run tests with race detector"
+	@echo "  fmt                - format Go code"
+	@echo "  lint               - run golangci-lint"
+	@echo "  tidy               - tidy and verify modules"
+	@echo "  terraform-fmt      - format Terraform files"
+	@echo "  terraform-validate - terraform init -backend=false and validate"
+	@echo "  terraform-lint     - tflint on terraform/"
+	@echo "  clean              - clean build artifacts"
+	@echo "  help               - show this help message"
