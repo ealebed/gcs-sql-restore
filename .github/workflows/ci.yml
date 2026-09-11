@@ -61,7 +61,9 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v4
         with:
-          terraform_version: "1.14.0"
+          # Match local CLI. 1.14.0 on linux rejected darwin-only h1 hashes
+          # in .terraform.lock.hcl during validate.
+          terraform_version: "1.16.1"
           terraform_wrapper: false
 
       - name: Setup TFLint
@@ -74,6 +76,10 @@ jobs:
         run: terraform fmt -check -recursive -diff
 
       - name: Terraform init
+        # Lock file must include h1 hashes for linux_* (CI) as well as darwin_*.
+        # Otherwise validate rejects unpacked providers: "cached package does
+        # not match any of the checksums recorded in the dependency lock file".
+        # Refresh with: terraform -chdir=terraform providers lock -platform=linux_amd64 -platform=linux_arm64 -platform=darwin_amd64 -platform=darwin_arm64
         run: terraform init -backend=false -input=false -lockfile=readonly
 
       - name: Terraform validate
