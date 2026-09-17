@@ -6,7 +6,7 @@ require (
 	cloud.google.com/go/storage v1.67.1
 	github.com/GoogleCloudPlatform/functions-framework-go v1.9.2
 	github.com/cloudevents/sdk-go/v2 v2.16.2
-	google.golang.org/api v0.297.0
+	google.golang.org/api v0.298.0
 )
 
 require (
